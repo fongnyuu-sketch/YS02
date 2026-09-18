@@ -1,0 +1,6 @@
+{
+  "name": "아산시 동부건강생활지원센터 민원 AI 상담소",
+  "description": "아산시 배방읍·장재리 주민을 위한 동부건강생활지원센터 24시간 민원 AI 상담 및 사용자 맞춤형 건강 프로그램 추천 서비스",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
