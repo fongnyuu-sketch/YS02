@@ -104,27 +104,57 @@ ${programsContext}`;
     const ai = getGeminiClient();
 
     if (ai) {
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: `주민 민원 질문: "${sanitized}"`,
-          config: {
-            systemInstruction,
-            temperature: 0.2, // low temperature for high precision grounding
-          },
-        });
-        aiAnswer = response.text || '';
-      } catch (err) {
-        console.error('Gemini API call failed, falling back to rule-based matcher:', err);
+      // Primary model: gemini-3.8-flash; Failover model: gemini-3.1-flash-lite
+      const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite'];
+      for (let i = 0; i < modelsToTry.length; i++) {
+        const model = modelsToTry[i];
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: `주민 민원 질문: "${sanitized}"`,
+            config: {
+              systemInstruction,
+              temperature: 0.2, // low temperature for high precision grounding
+            },
+          });
+          if (response?.text) {
+            aiAnswer = response.text;
+            break;
+          }
+        } catch (err: any) {
+          const errMsg = err?.message || String(err);
+          const isHighDemand = errMsg.includes('503') || errMsg.includes('high demand') || errMsg.includes('UNAVAILABLE') || errMsg.includes('429');
+          console.warn(`[Gemini Info] Model ${model} encountered ${isHighDemand ? 'temporary high demand' : 'transient issue'}. Falling back seamlessly.`);
+          if (i < modelsToTry.length - 1) {
+            await new Promise((r) => setTimeout(r, 250));
+          }
+        }
       }
     }
 
-    // Fallback if Gemini not configured or error
+    // High-precision Local RAG Fallback if Gemini is temporarily unavailable
     if (!aiAnswer) {
       if (matchedFaq) {
         aiAnswer = `${matchedFaq.answer}\n\n※ 추가 문의가 있으시면 아산시 동부건강생활지원센터 담당 부서(${matchedFaq.department}, ☎ ${matchedFaq.phone})로 연락 주시기 바랍니다.`;
       } else {
-        aiAnswer = `안녕하세요! 아산시 동부건강생활지원센터 민원 AI 상담사입니다.\n\n문의하신 내용과 일치하는 센터 공식 규정을 찾지 못했습니다.\n\n- **센터 위치**: 충남 아산시 배방읍 용연동길 50 (장재리 1202)\n- **운영시간**: 평일 09:00 ~ 18:00 (점심시간 12:00~13:00)\n- **주요 무료 서비스**: 체성분(InBody) 무료 검사, 혈압·혈당 측정, 건강 첫걸음 12주 순환운동, 고혈압·당뇨 집중교실, 갱년기 교실\n\n상세한 문의나 안내가 필요하시면 센터 대표번호(☎ 041-536-8723) 또는 운동상담실(☎ 041-536-8724)로 전화 주시면 친절히 연결해 드리겠습니다.`;
+        const lowerSan = sanitized.toLowerCase();
+        const matchedProg = programs.find(
+          (p) =>
+            lowerSan.includes(p.title.toLowerCase()) ||
+            lowerSan.includes(p.category.toLowerCase()) ||
+            (lowerSan.includes('순환운동') && p.id === 'prog-1') ||
+            (lowerSan.includes('당뇨') && p.id === 'prog-2') ||
+            (lowerSan.includes('갱년기') && p.id === 'prog-3') ||
+            (lowerSan.includes('조리') && p.id === 'prog-4') ||
+            (lowerSan.includes('걷기') && p.id === 'prog-5') ||
+            (lowerSan.includes('어르신') && p.id === 'prog-6')
+        );
+
+        if (matchedProg) {
+          aiAnswer = `### 🏛️ [${matchedProg.title}] 프로그램 안내\n\n아산시 동부건강생활지원센터에서 운영하는 **${matchedProg.title}** 안내입니다.\n\n- **대상**: ${matchedProg.target}\n- **일정**: ${matchedProg.schedule}\n- **장소**: ${matchedProg.location}\n- **수강료**: **${matchedProg.fee}**\n- **정원/상태**: 정원 ${matchedProg.capacity}명 (${matchedProg.status})\n- **담당 강사**: ${matchedProg.instructor}\n- **상세 내용**: ${matchedProg.description}\n\n※ 접수 및 문의는 센터 대표번호(☎ 041-536-8723) 또는 운동상담실(☎ 041-536-8724)로 문의해 주시기 바랍니다.`;
+        } else {
+          aiAnswer = `안녕하세요! 아산시 동부건강생활지원센터 민원 AI 상담사입니다.\n\n문의하신 내용과 일치하는 센터 공식 규정을 찾지 못했습니다.\n\n- **센터 위치**: 충남 아산시 배방읍 용연동길 50 (장재리 1202, KTX 천안아산역 인근)\n- **운영시간**: 평일 09:00 ~ 18:00 (점심시간 12:00~13:00 / 접수 마감 17:30)\n- **주요 무료 서비스**: 체성분(InBody) 무료 검사, 혈압·혈당 측정, 건강 첫걸음 12주 순환운동, 고혈압·당뇨 집중교실, 어린이 건강체험관 운영, 건강 운동프로그램 및 동아리 운영\n\n상세한 문의나 안내가 필요하시면 센터 대표번호(☎ 041-536-8723) 또는 운동상담실(☎ 041-536-8724)로 전화 주시면 친절히 연결해 드리겠습니다.`;
+        }
       }
     }
 
